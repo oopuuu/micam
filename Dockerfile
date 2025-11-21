@@ -12,4 +12,4 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked --no-dev
 
-CMD uv run micam
+CMD micam
