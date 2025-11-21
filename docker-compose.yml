@@ -1,0 +1,49 @@
+services:
+  miloco:
+    container_name: miloco
+    image: ghcr.nju.edu.cn/xiaomi/miloco-backend
+    network_mode: host
+    expose:
+      - ${MILOCO_PORT:-8000}
+    environment:
+      BACKEND_HOST: ${MILOCO_HOST:-0.0.0.0}
+      BACKEND_PORT: ${MILOCO_PORT:-8000}
+      BACKEND_LOG_LEVEL: ${MILOCO_LOG_LEVEL:-info}
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./miloco:/app/miloco_server/.temp
+    # NOTICE: Mount configuration files, if you want to use your own configuration files, please mount them here.
+    #  - ./miloco/server_config.yaml:/app/config/server_config.yaml
+    #  - ./miloco/prompt_config.yaml:/app/config/prompt_config.yaml
+    restart: unless-stopped
+
+  go2rtc:
+    image: ghcr.nju.edu.cn/alexxit/go2rtc
+    network_mode: host       # important for WebRTC, HomeKit, UDP cameras
+    privileged: true         # only for FFmpeg hardware transcoding
+    restart: unless-stopped  # autorestart on fail or config change from WebUI
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+    volumes:
+      - ./go2rtc:/config     # folder for go2rtc.yaml file (edit from WebUI)
+
+  micam1: &micam
+    image: ghcr.nju.edu.cn/miiot/micam:main
+    depends_on: [miloco, go2rtc]
+    environment: &micam_envs
+      MILOCO_BASE_URL: ${MILOCO_BASE_URL:-https://miloco:8000}
+      MILOCO_PASSWORD: ${MILOCO_PASSWORD}
+      CAMERA_ID: ${CAMERA_ID}
+      RTSP_URL: ${RTSP_URL}
+      VIDEO_CODEC: ${VIDEO_CODEC:-hevc}
+      STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
+      TZ: ${TZ:-Asia/Shanghai}
+    restart: always
+
+  micam2:
+    <<: *micam
+    scale: 0 # disable
+    environment:
+      <<: *micam_envs
+      CAMERA_ID: ${CAMERA_2_ID}
+      RTSP_URL: ${CAMERA_2_RTSP_URL}

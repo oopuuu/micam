@@ -1,0 +1,19 @@
+[project]
+name = "micam"
+version = "0.1.0"
+description = "WebSocket to RTSP bridge for Xiaomi Miloco"
+readme = "README.md"
+requires-python = ">=3.8"
+dependencies = [
+    "aiohttp>=3.8.0",
+]
+
+[project.urls]
+Repository = "https://github.com/miiot/micam"
+
+[project.scripts]
+micam = "micam:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
