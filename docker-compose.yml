@@ -48,6 +48,8 @@ services:
       STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
       TZ: ${TZ:-Asia/Shanghai}
     restart: always
+    extra_hosts:
+      - "miloco:${MILOCO_HOST_IP:-host-gateway}"
 
   # More Cameras ...
   micam2:
