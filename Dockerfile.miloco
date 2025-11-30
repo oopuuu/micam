@@ -9,9 +9,7 @@ ARG GITHUB_DOMAIN=github.com
 WORKDIR /app
 RUN set -eux; \
     apt update && apt install -y wget; \
-    wget https://${GITHUB_DOMAIN}/XiaoMi/xiaomi-miloco/archive/$VERSION.tar.gz -O- | tar zxvf - --strip 1 -C .; \
-    sed -i 's/enable_audio: bool = False,/enable_audio: bool = True,/' miot_kit/miot/camera.py; \
-    sed -i 's/= MIoTCameraVideoQuality.LOW,/= MIoTCameraVideoQuality.HIGH,/' miot_kit/miot/camera.py; \
+    wget https://${GITHUB_DOMAIN}/oopuuu/xiaomi-miloco/archive/$VERSION.tar.gz -O- | tar zxvf - --strip 1 -C .; \
     cp -rf /app/web_ui /
 
 WORKDIR /web_ui
