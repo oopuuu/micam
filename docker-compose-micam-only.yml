@@ -1,0 +1,40 @@
+version: '3.7'
+services:
+  # 仅保留 micam1 服务，用于运行 FFmpeg RTSP 桥接脚本
+  micam1:
+    container_name: micam1
+    # 假设这是您本地构建的包含 QSV 脚本的镜像
+    image: ghcr.io/oopuuu/miloco-backend:latest
+    build: . 
+    # --- 环境变量配置 (关键：所有参数必须在这里) ---
+    environment:
+      # 确保所有 Python 脚本需要的环境变量都已定义
+      MILOCO_BASE_URL: ${MILOCO_BASE_URL:-https://192.168.31.174:28800}
+      MILOCO_PASSWORD: ${MILOCO_PASSWORD:-}
+      CAMERA_ID: ${CAMERA_ID:}
+      VIDEO_QUALITY: ${VIDEO_QUALITY:-3} #使用新的miloco插件支持自定义推流分辨率
+      RTSP_URL: ${RTSP_URL:-rtsp://192.168.31.174:8554/stream1}
+      VIDEO_CODEC: ${VIDEO_CODEC:-hevc}
+      STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
+      USERNAME: ${USERNAME:-admin}
+      TZ: ${TZ:-Asia/Shanghai}
+      QUALITY_LEVEL: ${QUALITY_LEVEL:-3} # 视频质量 (3=super_high)
+      TARGET_FPS: ${TARGET_FPS:-30}     # 目标帧率
+      TARGET_BITRATE: ${TARGET_BITRATE:-3000} # 目标比特率
+    
+    # NOTICE: 显卡直通后，网络模式通常不需要 host，但为了兼容 RTSP 端口，可以保留。
+    network_mode: host 
+    restart: always
+    # entrypoint: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
+    
+    # 注意：如果 miloco 服务不再单独运行，extra_hosts 需要删除或调整
+    extra_hosts:
+      - "miloco:${MILOCO_HOST_IP:-host-gateway}"
+  # More Cameras ...
+  micam2:
+    <<: *micam
+    scale: 0 # Disabled by default, set 1 to enable
+    environment:
+      <<: *micam_envs
+      CAMERA_ID: ${CAMERA_2_ID}
+      RTSP_URL: ${CAMERA_2_RTSP_URL}
