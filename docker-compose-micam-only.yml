@@ -1,40 +1,57 @@
 version: '3.7'
+
+# ==========================================
+# 1. 定义公共的环境变量 (专门的一个锚点)
+# ==========================================
+x-micam-env: &micam-env
+  MILOCO_BASE_URL: ${MILOCO_BASE_URL:-https://192.168.31.174:28800}
+  MILOCO_PASSWORD: ${MILOCO_PASSWORD:-}
+  USERNAME: ${USERNAME:-admin}
+  VIDEO_CODEC: ${VIDEO_CODEC:-hevc}
+  STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
+  VIDEO_QUALITY: ${VIDEO_QUALITY:-2}
+  TZ: ${TZ:-Asia/Shanghai}
+  # QSV/优化参数
+  ENABLE_QSV: ${ENABLE_QSV:-true}
+  QUALITY_LEVEL: ${QUALITY_LEVEL:-3}
+  TARGET_FPS: ${TARGET_FPS:-30}
+  TARGET_BITRATE: ${TARGET_BITRATE:-3000}
+
+# ==========================================
+# 2. 定义公共的服务配置 (另一个锚点)
+# ==========================================
+x-micam-service: &micam-service
+  image: docker.io/library/micam_fork:latest
+  build: .
+  network_mode: host
+  restart: always
+  extra_hosts:
+    - "miloco:${MILOCO_HOST_IP:-host-gateway}"
+  # 权限配置 (按需开启)
+  # group_add:
+  #   - "105"
+
 services:
-  # 仅保留 micam1 服务，用于运行 FFmpeg RTSP 桥接脚本
+  # === 第一个摄像头服务 ===
   micam1:
+    <<: *micam-service       # 1. 引入通用的服务配置 (image, network等)
     container_name: micam1
-    # 假设这是您本地构建的包含 QSV 脚本的镜像
-    image: ghcr.io/oopuuu/miloco-backend:latest
-    build: . 
-    # --- 环境变量配置 (关键：所有参数必须在这里) ---
     environment:
-      # 确保所有 Python 脚本需要的环境变量都已定义
-      MILOCO_BASE_URL: ${MILOCO_BASE_URL:-https://192.168.31.174:28800}
-      MILOCO_PASSWORD: ${MILOCO_PASSWORD:-}
-      CAMERA_ID: ${CAMERA_ID:}
-      VIDEO_QUALITY: ${VIDEO_QUALITY:-3} #使用新的miloco插件支持自定义推流分辨率
-      RTSP_URL: ${RTSP_URL:-rtsp://192.168.31.174:8554/stream1}
-      VIDEO_CODEC: ${VIDEO_CODEC:-hevc}
-      STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
-      USERNAME: ${USERNAME:-admin}
-      TZ: ${TZ:-Asia/Shanghai}
-      QUALITY_LEVEL: ${QUALITY_LEVEL:-3} # 视频质量 (3=super_high)
-      TARGET_FPS: ${TARGET_FPS:-30}     # 目标帧率
-      TARGET_BITRATE: ${TARGET_BITRATE:-3000} # 目标比特率
-    
-    # NOTICE: 显卡直通后，网络模式通常不需要 host，但为了兼容 RTSP 端口，可以保留。
-    network_mode: host 
-    restart: always
-    # entrypoint: ["/bin/bash", "-c", "trap : TERM INT; sleep infinity & wait"]
-    
-    # 注意：如果 miloco 服务不再单独运行，extra_hosts 需要删除或调整
-    extra_hosts:
-      - "miloco:${MILOCO_HOST_IP:-host-gateway}"
-  # More Cameras ...
+      <<: *micam-env         # 2. 引入通用的环境变量
+      # === micam1 独有/覆盖的参数 ===
+      CAMERA_ID: ""
+      RTSP_URL: "rtsp://192.168.31.174:8554/stream1"
+
+  # === 第二个摄像头服务 ===
   micam2:
-    <<: *micam
-    scale: 0 # Disabled by default, set 1 to enable
+    <<: *micam-service       # 1. 引入通用的服务配置
+    container_name: micam2
     environment:
-      <<: *micam_envs
-      CAMERA_ID: ${CAMERA_2_ID}
-      RTSP_URL: ${CAMERA_2_RTSP_URL}
+      <<: *micam-env         # 2. 引入通用的环境变量
+      # === micam2 独有/覆盖的参数 ===
+      MILOCO_BASE_URL: "https://192.168.31.174:28801"
+      CAMERA_ID: ""
+      VIDEO_QUALITY: "1"
+      RTSP_URL: "rtsp://192.168.31.174:8554/stream2"
+      # 示例：单独为 micam2 修改帧率
+      # TARGET_FPS: "25"
