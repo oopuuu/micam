@@ -1,10 +1,65 @@
-services:
+version: '3.7'
 
+# ==========================================
+# 1. 定义公共的环境变量 (专门的一个锚点)
+# ==========================================
+x-micam-env: &micam-env
+  MILOCO_BASE_URL: ${MILOCO_BASE_URL:-https://192.168.31.174:8000}
+  MILOCO_PASSWORD: ${MILOCO_PASSWORD:-}
+  USERNAME: ${USERNAME:-admin}
+  VIDEO_CODEC: ${VIDEO_CODEC:-hevc}
+  STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
+  VIDEO_QUALITY: ${VIDEO_QUALITY:-2}
+  TZ: ${TZ:-Asia/Shanghai}
+  # QSV/优化参数
+  ENABLE_QSV: ${ENABLE_QSV:-true}
+  QUALITY_LEVEL: ${QUALITY_LEVEL:-3}
+  TARGET_FPS: ${TARGET_FPS:-30}
+  TARGET_BITRATE: ${TARGET_BITRATE:-3000}
+
+# ==========================================
+# 2. 定义公共的服务配置 (另一个锚点)
+# ==========================================
+x-micam-service: &micam-service
+  image: docker.io/library/micam_fork:latest
+  build: .
+  network_mode: host
+  restart: always
+  extra_hosts:
+    - "miloco:${MILOCO_HOST_IP:-host-gateway}"
+  # 权限配置 (按需开启)
+  # group_add:
+  #   - "105"
+
+services:
+  # === 第一个摄像头服务 ===
+  micam1:
+    <<: *micam-service       # 1. 引入通用的服务配置 (image, network等)
+    container_name: micam1
+    environment:
+      <<: *micam-env         # 2. 引入通用的环境变量
+      # === micam1 独有/覆盖的参数 ===
+      CAMERA_ID: ""
+      RTSP_URL: "rtsp://192.168.31.174:8554/stream1"
+
+  # === 第二个摄像头服务 ===
+  # micam2:
+  #   <<: *micam-service       # 1. 引入通用的服务配置
+  #   container_name: micam2
+  #   environment:
+  #     <<: *micam-env         # 2. 引入通用的环境变量
+  #     # === micam2 独有/覆盖的参数 ===
+  #     MILOCO_BASE_URL: "https://192.168.31.174:8001"
+  #     CAMERA_ID: ""
+  #     VIDEO_QUALITY: "1"
+  #     RTSP_URL: "rtsp://192.168.31.174:8554/stream2"
+      # 示例：单独为 micam2 修改帧率
+      # TARGET_FPS: "25"
   # https://github.com/XiaoMi/xiaomi-miloco
   miloco:
     container_name: miloco
-    # image: ghcr.nju.edu.cn/xiaomi/miloco-backend # Official image
-    image: ghcr.nju.edu.cn/miiot/miloco:main # Modified image to using HD stream
+    # image: ghcr.nju.edu.cn/oopuuu/miloco-backend # Official image
+    image: ghcr.nju.edu.cn/oopuuu/miloco:main # Modified image to using Customized stream
     network_mode: host
     environment:
       BACKEND_PORT: ${MILOCO_PORT:-8000}
@@ -28,27 +83,3 @@ services:
       TZ: ${TZ:-Asia/Shanghai}
     volumes:
       - ./go2rtc:/config     # folder for go2rtc.yaml file (edit from WebUI)
-
-  micam1: &micam
-    image: ghcr.nju.edu.cn/miiot/micam:main
-    depends_on: [miloco, go2rtc]
-    environment: &micam_envs
-      MILOCO_BASE_URL: ${MILOCO_BASE_URL:-https://miloco:8000}
-      MILOCO_PASSWORD: ${MILOCO_PASSWORD}
-      CAMERA_ID: ${CAMERA_ID}
-      RTSP_URL: ${RTSP_URL}
-      VIDEO_CODEC: ${VIDEO_CODEC:-hevc}
-      STREAM_CHANNEL: ${STREAM_CHANNEL:-0}
-      TZ: ${TZ:-Asia/Shanghai}
-    restart: always
-    extra_hosts:
-      - "miloco:${MILOCO_HOST_IP:-host-gateway}"
-
-  # More Cameras ...
-  micam2:
-    <<: *micam
-    scale: 0 # Disabled by default, set 1 to enable
-    environment:
-      <<: *micam_envs
-      CAMERA_ID: ${CAMERA_2_ID}
-      RTSP_URL: ${CAMERA_2_RTSP_URL}
