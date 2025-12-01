@@ -21,7 +21,7 @@ x-micam-env: &micam-env
 # 2. 定义公共的服务配置 (另一个锚点)
 # ==========================================
 x-micam-service: &micam-service
-  image: docker.io/library/micam_fork:latest
+  image: ghcr.io/oopuuu/micam:latest
   build: .
   network_mode: host
   restart: always
