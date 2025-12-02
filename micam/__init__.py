@@ -73,14 +73,28 @@ class RTSPBridge:
             '-fflags', 'nobuffer',  # Reduce latency
             '-flags', 'low_delay',
             '-use_wallclock_as_timestamps', '1',  # Generate timestamps from arrival time
-            '-analyzeduration', '20000000',  # 20 seconds
-            '-probesize', '20000000',  # 20 MB
+            '-max_delay', '500000',  # 0.5s max delay to prevent drift
+            
+            # Optimized for faster startup (critical for HomeKit)
+            '-analyzeduration', '1000000',  # Reduced to 1 second
+            '-probesize', '1000000',  # Reduced to 1 MB
+            
             '-f', self.video_codec,  # Input format (hevc/h264)
             '-i', 'pipe:0',  # Read from stdin
-            '-c:v', 'copy',  # Copy video stream
-            '-c:a', 'copy',  # Copy audio stream
+            
+            '-c:v', 'copy',  # Copy video stream (Ensure source is H.264/H.265)
+            '-bsf:v', 'dump_extra',  # Ensure SPS/PPS extradata is in the stream for players
+            
+            # Transcode audio to AAC for HomeKit compatibility
+            # (Most cameras use G.711/PCM which HomeKit does not support)
+            '-c:a', 'aac',
+            '-b:a', '64k',
+            '-ar', '16000',
+            '-ac', '1',
+            
             '-f', 'rtsp',  # Output format
             '-rtsp_transport', 'tcp',  # Use TCP for RTSP
+            '-max_muxing_queue_size', '1024',  # Prevent buffer overflow errors
             self.rtsp_url,
         ]
 
