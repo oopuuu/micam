@@ -19,10 +19,7 @@ logging.basicConfig(
 logger = logging.getLogger("Bridge")
 
 class PipeWriter(threading.Thread):
-    """
-    独立线程负责写入命名管道。
-    使用 os.open(O_RDWR) 避免在 Linux/macOS 上因没有读取端而阻塞。
-    """
+    """独立线程负责写入命名管道，防止阻塞"""
     def __init__(self, pipe_path, name):
         super().__init__(daemon=True)
         self.pipe_path = pipe_path
@@ -36,10 +33,8 @@ class PipeWriter(threading.Thread):
         try:
             if os.path.exists(self.pipe_path):
                 os.remove(self.pipe_path)
-            
             os.mkfifo(self.pipe_path)
-            
-            # [关键] 使用 O_RDWR 打开，防止 open 阻塞死锁
+            # O_RDWR 防止 Linux/macOS 上 open 阻塞
             self.fd = os.open(self.pipe_path, os.O_RDWR)
             logger.info(f"[{self.name}] Pipe opened: {self.pipe_path}")
         except Exception as e:
@@ -49,7 +44,6 @@ class PipeWriter(threading.Thread):
     def write(self, data):
         if not self.running: return
         try:
-            # 非阻塞写入，超时丢弃，优先保证实时性
             self.queue.put(data, timeout=0.01)
         except queue.Full:
             pass 
@@ -63,10 +57,10 @@ class PipeWriter(threading.Thread):
             except queue.Empty:
                 continue
             except OSError as e:
-                logger.error(f"[{self.name}] Write error (Pipe broken): {e}")
+                logger.error(f"[{self.name}] Write error: {e}")
                 break
             except Exception as e:
-                logger.error(f"[{self.name}] Unexpected error: {e}")
+                logger.error(f"[{self.name}] Error: {e}")
                 break
         self.close()
 
@@ -109,35 +103,34 @@ class RTSPBridge:
             return False
 
     def _start_ffmpeg(self):
-        # 1. 启动管道写入线程
         self.video_writer = PipeWriter(self.pipe_video, "Video")
         self.audio_writer = PipeWriter(self.pipe_audio, "Audio")
         self.video_writer.start()
         self.audio_writer.start()
 
-        # 2. 构建 FFmpeg 命令
         ffmpeg_cmd = [
             'ffmpeg',
             '-y',
-            '-v', 'info',
+            '-v', 'error', # 生产模式只看错误
             '-hide_banner',
             
-            # [全局参数]
+            # [全局时间戳控制]
+            '-use_wallclock_as_timestamps', '1',
             '-fflags', '+genpts+nobuffer', 
             '-flags', 'low_delay',
             '-analyzeduration', '1000000', 
             '-probesize', '1000000',       
 
-            # --- 输入 1: 视频 (HEVC) ---
+            # --- 输入 1: 视频 (裸流) ---
             '-f', self.video_codec, 
-            '-use_wallclock_as_timestamps', '1', # 视频依然依赖接收时间
+            '-use_wallclock_as_timestamps', '1', # 视频依赖 Wallclock
             '-i', self.pipe_video,
 
-            # --- 输入 2: 音频 (G.711A 16000Hz) ---
+            # --- 输入 2: 音频 (G.711A) ---
             '-f', 'alaw', 
-            '-ar', '16000',  # [核心修复] 修正为 16000Hz
+            '-ar', '16000', # 锁定 16k (小米高清常见配置)
             '-ac', '1',
-            # [关键] 音频不加 wallclock，我们要自己重写时间戳
+            # [关键] 音频不使用 Wallclock，依赖下方滤镜重构
             '-i', self.pipe_audio,
 
             # --- 映射 ---
@@ -146,19 +139,17 @@ class RTSPBridge:
 
             # --- 编码与处理 ---
             
-            # 视频: 透传 + 格式修复
+            # 视频: 透传 (Copy) - 不消耗 CPU
             '-c:v', 'copy', 
             '-bsf:v', 'hevc_mp4toannexb', 
 
-            # 音频: [终极修复] 数学重构时间戳 + Opus 编码
-            # aresample=16000: 确认基准采样率
-            # asetpts=N/SR/TB: 根据样本计数(N)生成完美线性的时间戳
+            # 音频: PCM (s16le) - 极低 CPU
+            # [关键] 使用 asetpts 根据样本计数重写时间戳，消除网络抖动带来的延迟
             '-af', 'aresample=16000,asetpts=N/SR/TB',
             
-            '-c:a', 'libopus',  # 转为 Opus
-            '-b:a', '24k',      
-            '-ar', '16000',     # 输出 16k
-            '-application', 'lowdelay',
+            '-c:a', 'pcm_s16le', 
+            '-ar', '16000',     # 输出 16k 给 Go2RTC
+            '-ac', '1',
 
             # --- 输出 RTSP ---
             '-f', 'rtsp',
@@ -166,7 +157,7 @@ class RTSPBridge:
             self.rtsp_url,
         ]
 
-        logger.info("Starting FFmpeg (16k Sync Mode)...")
+        logger.info("Starting FFmpeg (PCM Output, Low CPU)...")
         self.process = subprocess.Popen(
             ffmpeg_cmd, 
             stdout=subprocess.DEVNULL, 
@@ -179,8 +170,6 @@ class RTSPBridge:
         if not self.process: return
         for line in self.process.stderr:
             l = line.decode(errors='ignore').strip()
-            if "Error" in l or "pps" in l.lower() or "fps" in l:
-                 pass 
             if "Error" in l:
                 logger.error(f"[FFmpeg] {l}")
 
@@ -189,33 +178,28 @@ class RTSPBridge:
         if self.audio_writer: self.audio_writer.close()
 
         if self.process:
-            logger.info("Stopping FFmpeg process...")
             self.process.terminate()
             try: self.process.wait(timeout=2)
             except: self.process.kill()
             self.process = None
 
     async def run_forever(self):
-        """断线重连主循环"""
         while True:
             try:
                 await self.run_session()
             except Exception as e:
                 logger.error(f"Session error: {e}")
-            
-            logger.info("Session ended. Restarting bridge in 3 seconds...")
+            logger.info("Restarting bridge in 3s...")
             self._stop_ffmpeg()
             await asyncio.sleep(3)
 
     async def run_session(self):
         self._start_ffmpeg()
-        
         jar = aiohttp.CookieJar(unsafe=True)
         timeout = aiohttp.ClientTimeout(total=None, connect=10, sock_read=20)
 
         async with aiohttp.ClientSession(cookie_jar=jar, timeout=timeout) as session:
-            if not await self._login(session):
-                return
+            if not await self._login(session): return
 
             protocol = "wss" if self.base_url.startswith("https") else "ws"
             host = self.base_url.split("://")[1]
@@ -225,34 +209,16 @@ class RTSPBridge:
             async with session.ws_connect(ws_url, ssl=False, heartbeat=15.0) as ws:
                 logger.info("WebSocket Connected! Streaming...")
                 
-                last_log_time = time.time()
-                video_bytes = 0
-                audio_packets = 0
-
                 async for msg in ws:
                     if msg.type == aiohttp.WSMsgType.BINARY:
                         data = msg.data
                         if len(data) > 1:
                             p_type = data[0]
                             payload = data[1:]
-                            
-                            if p_type == 1: # Video
-                                self.video_writer.write(payload)
-                                video_bytes += len(payload)
-                            elif p_type == 2: # Audio
-                                self.audio_writer.write(payload)
-                                audio_packets += 1
-                            
-                            if time.time() - last_log_time > 5:
-                                video_bytes = 0
-                                audio_packets = 0
-                                last_log_time = time.time()
-
-                    elif msg.type == aiohttp.WSMsgType.ERROR:
-                        logger.error("WebSocket Error detected.")
-                        break
-                    elif msg.type == aiohttp.WSMsgType.CLOSED:
-                        logger.info("WebSocket Closed.")
+                            if p_type == 1: self.video_writer.write(payload)
+                            elif p_type == 2: self.audio_writer.write(payload)
+                    elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
+                        logger.info("WS Closed")
                         break
 
 def main():
@@ -261,6 +227,7 @@ def main():
     parser.add_argument("--username", default="admin")
     parser.add_argument("--password", default=os.getenv("MILOCO_PASSWORD", ""))
     parser.add_argument("--camera-id", default=os.getenv("CAMERA_ID", ""))
+    # 确保这里的 IP 是你 HAOS 的 IP
     parser.add_argument("--rtsp-url", default=os.getenv("RTSP_URL", "rtsp://127.0.0.1:8554/stream1"))
     parser.add_argument("--video-quality", default="2")
     
